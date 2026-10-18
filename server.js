@@ -1,25 +1,29 @@
 const express = require('express');
 const multer = require('multer');
 const { google } = require('googleapis');
-const admin = require('firebase-admin');
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config();
 
 const app = express();
 
-// Render-এর临时 /tmp ফোল্ডার ব্যবহার করা (Ephemeral storage safe)
+// ১. সরাসরি কোডের ভেতরে সমস্ত ক্রেডেনশিয়াল এবং টোকেন সেট করা হলো
+const CLIENT_ID = '630943791166-4f16qqggn0jp5vocd5071kibctmb8j9a.apps.googleusercontent.com';
+const CLIENT_SECRET = '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';
+const REDIRECT_URL = 'http://localhost:3000/oauth2callback';
+const REFRESH_TOKEN = '1//0gaivZAzGs-P4CgYIARAAGBASNwF-L9Ir7RwiR7a6wHMFlmiVrsKNRC0yxZty1DQfoG9t_RMAYEEj_2_ttzeaZBY5_cG4x6FwrZ0';
+
+// Render বা লোকাল সার্ভারের জন্য টেম্পোরারি আপলোড ফোল্ডার
 const upload = multer({
   dest: '/tmp/',
   limits: {
-    fileSize: 500 * 1024 * 1024 // ৫০০ MB ভিডিও সাইজ লিমিট
+    fileSize: 500 * 1024 * 1024 // সর্বোচ্চ ৫০০ MB ভিডিও ফাইল
   }
 });
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS এনাবল করা (যাতে আপনার ফ্রন্টএন্ড ওয়েবসাইট থেকে এপিআই কল করা যায়)
+// CORS এনাবল করা (যাতে যেকোনো ফ্রন্টএন্ড বা ড্যাশবোর্ড থেকে রিকোয়েস্ট গ্রহণ করতে পারে)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
@@ -30,30 +34,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// ফায়ারবেস সার্ভিস অ্যাকাউন্ট কনফিগারেশন (Optional - Environment Variable থেকে)
-if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-  try {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-      databaseURL: process.env.FIREBASE_DATABASE_URL
-    });
-    console.log('Firebase Admin SDK Initialized Successfully.');
-  } catch (err) {
-    console.error('Firebase Initialization Error:', err.message);
-  }
-}
-
 // Google OAuth2 Client সেটআপ
 const oauth2Client = new google.auth.OAuth2(
-  process.env.CLIENT_ID,
-  process.env.CLIENT_SECRET,
-  process.env.REDIRECT_URL || 'http://localhost:3000/oauth2callback'
+  CLIENT_ID,
+  CLIENT_SECRET,
+  REDIRECT_URL
 );
 
 // রিফ্রেশ টোকেন সেট করা
 oauth2Client.setCredentials({
-  refresh_token: process.env.REFRESH_TOKEN
+  refresh_token: REFRESH_TOKEN
 });
 
 const youtube = google.youtube({
@@ -61,15 +51,15 @@ const youtube = google.youtube({
   auth: oauth2Client
 });
 
-// হোম রাউট (স্বাস্থ্য পরীক্ষা)
+// হোম রাউট (টেস্ট করার জন্য)
 app.get('/', (req, res) => {
-  res.send('Class Video Upload Server is Running Live!');
+  res.send('Class Video Upload Server is Running Live & Ready!');
 });
 
-// ভিডিও আপলোড এপিআই
+// ভিডিও আপলোড এপিআই (সরাসরি ইউটিউবে Unlisted হিসেবে যাবে)
 app.post('/api/upload-video', upload.single('video'), async (req, res) => {
   if (!req.file) {
-    return res.status(400).json({ success: false, error: 'No video file uploaded.' });
+    return res.status(400).json({ success: false, error: 'কোনো ভিডিও ফাইল আপলোড করা হয়নি।' });
   }
 
   const filePath = req.file.path;
@@ -77,9 +67,9 @@ app.post('/api/upload-video', upload.single('video'), async (req, res) => {
   try {
     const { title, description } = req.body;
 
-    console.log(`Uploading video "${title}" to YouTube...`);
+    console.log(`Uploading video "${title || 'Untitled'}" to YouTube...`);
 
-    // ইউটিউবে Unlisted ভিডিও হিসেবে ইন্সার্ট করা
+    // ইউটিউবে ভিডিও আপলোড রিকোয়েস্ট
     const youtubeResponse = await youtube.videos.insert({
       part: 'snippet,status',
       requestBody: {
@@ -88,7 +78,7 @@ app.post('/api/upload-video', upload.single('video'), async (req, res) => {
           description: description || 'Class Platform Uploaded Video',
         },
         status: {
-          privacyStatus: 'unlisted', // Unlisted প্রাইভেসি
+          privacyStatus: 'unlisted', // ভিডিওটি Unlisted থাকবে
         },
       },
       media: {
@@ -99,21 +89,9 @@ app.post('/api/upload-video', upload.single('video'), async (req, res) => {
     const videoId = youtubeResponse.data.id;
     console.log(`✅ Upload Success! YouTube Video ID: ${videoId}`);
 
-    // ফাইল রিমুভ নিশ্চিত করা
+    // টেম্পোরারি ফাইল রিমুভ করা
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
-    }
-
-    // ফায়ারবেস ডাটাবেজে রেকর্ড রাখা (যদি চালু থাকে)
-    if (admin.apps.length) {
-      const db = admin.database();
-      const videoRef = db.ref('class_videos').push();
-      await videoRef.set({
-        title: title || 'নতুন ক্লাস ভিডিও',
-        description: description || '',
-        videoId: videoId,
-        createdAt: Date.now()
-      });
     }
 
     res.json({
@@ -125,7 +103,7 @@ app.post('/api/upload-video', upload.single('video'), async (req, res) => {
   } catch (error) {
     console.error('YouTube Upload Error:', error);
 
-    // এরর আসলেও টেম্পোরারি ফাইল ডিলিট
+    // এরর আসলেও টেম্পোরারি ফাইল ডিলিট নিশ্চিত করা
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
