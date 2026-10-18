@@ -1,0 +1,16 @@
+{
+  "name": "class-video-backend",
+  "version": "1.0.0",
+  "description": "YouTube Video Management Backend for Class Platform",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "firebase-admin": "^12.1.0",
+    "googleapis": "^137.1.0",
+    "multer": "^1.4.5-lts.1"
+  }
+}
